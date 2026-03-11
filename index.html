@@ -265,15 +265,8 @@
                             display: true,
                             position: 'top'
                         },
-                        tooltip: {
-                            callbacks: {
-                                label: (context) => {
-                                    const label = context.dataset.label || '';
-                                    const value = context.raw;
-                                    return `${label}: ${value.toFixed(2)} 小时`;
-                                }
-                            }
-                        }
+                        // ⚡ 彻底禁用 tooltip (鼠标悬停效果)
+                        tooltip: false
                     },
                     scales: {
                         x: {
@@ -292,7 +285,7 @@
             });
         }
 
-        // 使用原生Canvas绘制饼图百分比，图例只显示分类名
+        // 使用原生Canvas绘制饼图百分比，图例只显示分类名，无tooltip
         function renderPieChart(categories, data) {
             if (pieChart) pieChart.destroy();
 
@@ -305,7 +298,7 @@
                 return `hsl(${hue}, 70%, 45%)`;
             });
             
-            // 创建Chart.js饼图 - 图例只显示分类名
+            // 创建Chart.js饼图 - 图例只显示分类名 + 完全禁用tooltip
             pieChart = new Chart(pieCanvas.getContext('2d'), {
                 type: 'pie',
                 data: {
@@ -345,14 +338,8 @@
                                 }
                             }
                         },
-                        tooltip: {
-                            callbacks: {
-                                label: (context) => {
-                                    const value = Math.round(context.raw);
-                                    return `${value}`;
-                                }
-                            }
-                        }
+                        // ⚡ 彻底禁用 tooltip (鼠标悬停效果)
+                        tooltip: false
                     }
                 }
             });
