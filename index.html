@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>每周分类时长统计</title>
+    <title>每周分类时长统计 · 纯净图例</title>
     <!-- Chart.js 轻量CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
     <style>
@@ -44,6 +44,16 @@
             padding: 15px 10px 5px 10px;
             border: 1px solid #edf2f7;
         }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+        @media (min-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr 3fr;
+            }
+        }
         canvas {
             display: block;
             width: 100%;
@@ -64,16 +74,6 @@
         .error-alert.show {
             display: flex;
         }
-        .loader {
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            border: 3px solid #cbd5e1;
-            border-radius: 50%;
-            border-top-color: #1e293b;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -82,31 +82,33 @@
         <h2>📊 每周分类时长统计</h2>
     </div>
 
-    <!-- 错误提示区 -->
     <div id="errorBox" class="error-alert">
         <span>⚠️</span> <span id="errorMsg"></span>
     </div>
 
-    <!-- 图表画布 -->
-    <div class="chart-container">
-        <canvas id="weeklyCategoryChart"></canvas>
+    <div class="charts-grid">
+        <div class="chart-container">
+            <canvas id="categoryPieChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <canvas id="weeklyCategoryChart"></canvas>
+        </div>
     </div>
 </div>
 
 <script>
     (function() {
-        // ---------- 配置 ----------
         const POCKETBASE_URL = 'http://127.0.0.1:8090';
         const COLLECTION = 'done_things_sum';
 
-        // DOM 元素
         const canvas = document.getElementById('weeklyCategoryChart');
+        const pieCanvas = document.getElementById('categoryPieChart');
         const errorBox = document.getElementById('errorBox');
         const errorMsg = document.getElementById('errorMsg');
 
-        let chartInstance = null;
+        let barChart = null;
+        let pieChart = null;
 
-        // ---------- 工具函数 ----------
         function showError(message) {
             errorMsg.innerText = message || '未知错误';
             errorBox.classList.add('show');
@@ -116,9 +118,6 @@
             errorBox.classList.remove('show');
         }
 
-        /**
-         * 解析JSON字段，处理可能的字符串格式
-         */
         function parseJsonField(field) {
             if (field === null || field === undefined) return 0;
             if (typeof field === 'number') return field;
@@ -134,9 +133,6 @@
             return 0;
         }
 
-        /**
-         * 按周和分类整理数据
-         */
         function organizeDataByWeek(records) {
             const weekMap = new Map();
             const categorySet = new Set();
@@ -190,13 +186,23 @@
             };
         }
 
-        /**
-         * 渲染分组柱状图（柱子上显示数字）
-         */
-        function renderGroupedBarChart(weeks, categories, dataByCategory) {
-            if (chartInstance) chartInstance.destroy();
+        function organizeDataForPie(records) {
+            const counts = {};
+            records.forEach(record => {
+                const category = record.category_name;
+                if (!category) return;
+                const num = parseJsonField(record.done_count);
+                if (num === 0) return;
+                counts[category] = (counts[category] || 0) + num;
+            });
+            const categories = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+            const data = categories.map(c => counts[c]);
+            return { categories, data };
+        }
 
-            // 为每个分类生成颜色
+        function renderGroupedBarChart(weeks, categories, dataByCategory) {
+            if (barChart) barChart.destroy();
+
             const datasets = categories.map(category => {
                 const hue = Array.from(category).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
                 return {
@@ -211,9 +217,9 @@
 
             const ctx = canvas.getContext('2d');
             
-            // 注册数据显示插件
+            // 注册数据显示插件 (柱上显示数值) - 修复整数显示问题
             Chart.register({
-                id: 'datalabels',
+                id: 'barLabels',
                 afterDatasetsDraw(chart) {
                     const ctx = chart.ctx;
                     chart.data.datasets.forEach((dataset, datasetIndex) => {
@@ -232,7 +238,11 @@
                                     ctx.shadowOffsetY = 0;
                                     ctx.textAlign = 'center';
                                     ctx.textBaseline = 'bottom';
-                                    ctx.fillText(value.toFixed(1), x, y - 4);
+                                    
+                                    // 修复：整数显示整数，浮点数保留一位小数
+                                    const displayValue = Number.isInteger(value) ? value.toString() : value.toFixed(1);
+                                    ctx.fillText(displayValue, x, y - 4);
+                                    
                                     ctx.restore();
                                 }
                             });
@@ -241,7 +251,7 @@
                 }
             });
 
-            chartInstance = new Chart(ctx, {
+            barChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: weeks,
@@ -270,22 +280,140 @@
                             grid: { display: false },
                             ticks: { 
                                 maxRotation: 45, 
-                                minRotation: 30,
-                                autoSkip: true,
-                                maxTicksLimit: 12
+                                minRotation: 30
                             }
                         },
                         y: {
                             beginAtZero: true,
-                            title: { display: true, text: '时长 (小时)' },
-                            grid: { color: '#e2e8f0' }
+                            title: { display: true, text: '时长 (小时)' }
                         }
                     }
                 }
             });
         }
 
-        // 从PocketBase获取数据
+        // 使用原生Canvas绘制饼图百分比，图例只显示分类名
+        function renderPieChart(categories, data) {
+            if (pieChart) pieChart.destroy();
+
+            const backgroundColors = categories.map(cat => {
+                const hue = Array.from(cat).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+                return `hsl(${hue}, 70%, 65%)`;
+            });
+            const borderColors = categories.map(cat => {
+                const hue = Array.from(cat).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+                return `hsl(${hue}, 70%, 45%)`;
+            });
+            
+            // 创建Chart.js饼图 - 图例只显示分类名
+            pieChart = new Chart(pieCanvas.getContext('2d'), {
+                type: 'pie',
+                data: {
+                    labels: categories,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: backgroundColors,
+                        borderColor: borderColors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            position: 'bottom',
+                            labels: {
+                                // 图例只显示分类名称，不带数字
+                                generateLabels: (chart) => {
+                                    const data = chart.data;
+                                    if (data.labels && data.labels.length && data.datasets.length) {
+                                        const dataset = data.datasets[0];
+                                        
+                                        return data.labels.map((label, i) => {
+                                            return {
+                                                text: label,  // 只显示分类名
+                                                fillStyle: dataset.backgroundColor[i],
+                                                strokeStyle: dataset.borderColor[i],
+                                                lineWidth: 1,
+                                                hidden: false,
+                                                index: i
+                                            };
+                                        });
+                                    }
+                                    return [];
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => {
+                                    const value = Math.round(context.raw);
+                                    return `${value}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // 使用原生Canvas在饼图上绘制百分比 - 调整位置到扇区边缘
+            const total = data.reduce((a, b) => a + b, 0);
+            
+            // 监听绘制完成事件
+            const originalDraw = pieChart.draw;
+            pieChart.draw = function() {
+                originalDraw.call(this);
+                
+                // 获取canvas上下文
+                const ctx = pieCanvas.getContext('2d');
+                const meta = this.getDatasetMeta(0);
+                
+                if (!meta || !meta.data) return;
+                
+                // 在每个扇区上绘制百分比 - 调整位置到扇区边缘
+                meta.data.forEach((element, index) => {
+                    const value = data[index];
+                    if (value > 0 && total > 0) {
+                        const percent = Math.round(value / total * 100) + '%';
+                        
+                        // 获取扇区中心点
+                        const { x, y } = element.tooltipPosition();
+                        
+                        // 计算向外偏移的方向向量
+                        // 获取扇区的中间角度
+                        const startAngle = element.startAngle;
+                        const endAngle = element.endAngle;
+                        const midAngle = (startAngle + endAngle) / 2;
+                        
+                        // 计算向外偏移的距离 - 放在扇区边缘（半径的0.85倍）
+                        const radius = element.outerRadius * 0.3;
+                        const offsetX = Math.cos(midAngle) * radius;
+                        const offsetY = Math.sin(midAngle) * radius;
+                        
+                        // 新位置 = 中心点 + 偏移量
+                        const newX = x + offsetX;
+                        const newY = y + offsetY;
+                        
+                        ctx.save();
+                        ctx.font = 'bold 14px system-ui, -apple-system, sans-serif';
+                        ctx.fillStyle = '#ffffff';
+                        ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                        ctx.shadowBlur = 6;
+                        ctx.shadowOffsetX = 1;
+                        ctx.shadowOffsetY = 1;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(percent, newX, newY);
+                        ctx.restore();
+                    }
+                });
+            };
+            
+            // 触发重绘
+            pieChart.update();
+        }
+
         async function fetchFromPocketBase() {
             hideError();
 
@@ -310,22 +438,27 @@
                 if (items.length === 0) {
                     showError('暂无数据');
                     renderGroupedBarChart([], [], {});
+                    renderPieChart([], []);
                     return;
                 }
 
                 const chartData = organizeDataByWeek(items);
-                
+
                 if (chartData.weeks.length === 0) {
                     showError('无法按周组织数据');
+                    renderGroupedBarChart([], [], {});
+                    renderPieChart([], []);
                     return;
                 }
 
-                // 渲染图表
                 renderGroupedBarChart(
                     chartData.weeks, 
                     chartData.categories, 
                     chartData.dataByCategory
                 );
+
+                const pieData = organizeDataForPie(items);
+                renderPieChart(pieData.categories, pieData.data);
 
             } catch (err) {
                 console.error('Fetch error:', err);
@@ -333,7 +466,6 @@
             }
         }
 
-        // 初始化：页面加载自动获取数据
         fetchFromPocketBase();
     })();
 </script>
