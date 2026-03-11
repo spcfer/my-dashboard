@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>每周分类时长统计</title>
+    <!-- Chart.js 轻量CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+        body {
+            background: #f5f7fb;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            max-width: 1400px;
+            width: 100%;
+            border-radius: 28px;
+            box-shadow: 0 20px 40px -10px rgba(0,20,30,0.15);
+            padding: 30px;
+        }
+        .header {
+            margin-bottom: 25px;
+        }
+        .header h2 {
+            margin: 0;
+            font-weight: 500;
+            color: #1e293b;
+        }
+        .chart-container {
+            position: relative;
+            height: 550px;
+            border-radius: 20px;
+            background: #fdfdfe;
+            padding: 15px 10px 5px 10px;
+            border: 1px solid #edf2f7;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .error-alert {
+            background: #fee2e2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            border-radius: 40px;
+            padding: 14px 25px;
+            font-size: 0.95rem;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .error-alert.show {
+            display: flex;
+        }
+        .loader {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 3px solid #cbd5e1;
+            border-radius: 50%;
+            border-top-color: #1e293b;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="header">
+        <h2>📊 每周分类时长统计</h2>
+    </div>
+
+    <!-- 错误提示区 -->
+    <div id="errorBox" class="error-alert">
+        <span>⚠️</span> <span id="errorMsg"></span>
+    </div>
+
+    <!-- 图表画布 -->
+    <div class="chart-container">
+        <canvas id="weeklyCategoryChart"></canvas>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // ---------- 配置 ----------
+        const POCKETBASE_URL = 'http://127.0.0.1:8090';
+        const COLLECTION = 'done_things_sum';
+
+        // DOM 元素
+        const canvas = document.getElementById('weeklyCategoryChart');
+        const errorBox = document.getElementById('errorBox');
+        const errorMsg = document.getElementById('errorMsg');
+
+        let chartInstance = null;
+
+        // ---------- 工具函数 ----------
+        function showError(message) {
+            errorMsg.innerText = message || '未知错误';
+            errorBox.classList.add('show');
+        }
+        
+        function hideError() {
+            errorBox.classList.remove('show');
+        }
+
+        /**
+         * 解析JSON字段，处理可能的字符串格式
+         */
+        function parseJsonField(field) {
+            if (field === null || field === undefined) return 0;
+            if (typeof field === 'number') return field;
+            if (typeof field === 'string') {
+                try {
+                    const parsed = JSON.parse(field);
+                    return typeof parsed === 'number' ? parsed : 0;
+                } catch {
+                    const num = parseFloat(field);
+                    return isNaN(num) ? 0 : num;
+                }
+            }
+            return 0;
+        }
+
+        /**
+         * 按周和分类整理数据
+         */
+        function organizeDataByWeek(records) {
+            const weekMap = new Map();
+            const categorySet = new Set();
+
+            records.forEach(record => {
+                const week = record.week;
+                const category = record.category_name;
+                if (week === undefined || week === null || !category) return;
+
+                const hours = parseJsonField(record.total_hours);
+                if (hours === 0) return;
+
+                categorySet.add(category);
+
+                if (!weekMap.has(week)) {
+                    weekMap.set(week, new Map());
+                }
+                
+                const categoryMap = weekMap.get(week);
+                const currentHours = categoryMap.get(category) || 0;
+                categoryMap.set(category, currentHours + hours);
+            });
+
+            if (weekMap.size === 0) {
+                return { weeks: [], categories: [], dataByCategory: {} };
+            }
+
+            const sortedWeeks = Array.from(weekMap.keys()).sort((a, b) => a - b);
+            const sortedCategories = Array.from(categorySet).sort((a, b) => a.localeCompare(b));
+
+            const dataByCategory = {};
+
+            sortedCategories.forEach(category => {
+                dataByCategory[category] = new Array(sortedWeeks.length).fill(0);
+            });
+
+            sortedWeeks.forEach((week, weekIndex) => {
+                const categoryMap = weekMap.get(week);
+                categoryMap.forEach((hours, category) => {
+                    const categoryIndex = sortedCategories.indexOf(category);
+                    if (categoryIndex !== -1) {
+                        dataByCategory[category][weekIndex] = hours;
+                    }
+                });
+            });
+
+            return {
+                weeks: sortedWeeks,
+                categories: sortedCategories,
+                dataByCategory: dataByCategory
+            };
+        }
+
+        /**
+         * 渲染分组柱状图（柱子上显示数字）
+         */
+        function renderGroupedBarChart(weeks, categories, dataByCategory) {
+            if (chartInstance) chartInstance.destroy();
+
+            // 为每个分类生成颜色
+            const datasets = categories.map(category => {
+                const hue = Array.from(category).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+                return {
+                    label: category,
+                    data: dataByCategory[category],
+                    backgroundColor: `hsl(${hue}, 70%, 65%)`,
+                    borderColor: `hsl(${hue}, 70%, 45%)`,
+                    borderWidth: 1,
+                    borderRadius: 4
+                };
+            });
+
+            const ctx = canvas.getContext('2d');
+            
+            // 注册数据显示插件
+            Chart.register({
+                id: 'datalabels',
+                afterDatasetsDraw(chart) {
+                    const ctx = chart.ctx;
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        if (!meta.hidden) {
+                            meta.data.forEach((element, index) => {
+                                const value = dataset.data[index];
+                                if (value > 0) {
+                                    const { x, y } = element.tooltipPosition();
+                                    ctx.save();
+                                    ctx.font = 'bold 11px system-ui';
+                                    ctx.fillStyle = '#1e293b';
+                                    ctx.shadowColor = 'white';
+                                    ctx.shadowBlur = 4;
+                                    ctx.shadowOffsetX = 0;
+                                    ctx.shadowOffsetY = 0;
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'bottom';
+                                    ctx.fillText(value.toFixed(1), x, y - 4);
+                                    ctx.restore();
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: weeks,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => {
+                                    const label = context.dataset.label || '';
+                                    const value = context.raw;
+                                    return `${label}: ${value.toFixed(2)} 小时`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: { 
+                                maxRotation: 45, 
+                                minRotation: 30,
+                                autoSkip: true,
+                                maxTicksLimit: 12
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: '时长 (小时)' },
+                            grid: { color: '#e2e8f0' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 从PocketBase获取数据
+        async function fetchFromPocketBase() {
+            hideError();
+
+            try {
+                const url = `${POCKETBASE_URL}/api/collections/${COLLECTION}/records?sort=week&perPage=500`;
+                
+                const response = await fetch(url, {
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    let errDetail = `HTTP ${response.status}`;
+                    if (response.status === 404) {
+                        errDetail += ' 集合不存在';
+                    }
+                    throw new Error(errDetail);
+                }
+
+                const data = await response.json();
+                const items = data.items || [];
+                
+                if (items.length === 0) {
+                    showError('暂无数据');
+                    renderGroupedBarChart([], [], {});
+                    return;
+                }
+
+                const chartData = organizeDataByWeek(items);
+                
+                if (chartData.weeks.length === 0) {
+                    showError('无法按周组织数据');
+                    return;
+                }
+
+                // 渲染图表
+                renderGroupedBarChart(
+                    chartData.weeks, 
+                    chartData.categories, 
+                    chartData.dataByCategory
+                );
+
+            } catch (err) {
+                console.error('Fetch error:', err);
+                showError(`请求失败: ${err.message}`);
+            }
+        }
+
+        // 初始化：页面加载自动获取数据
+        fetchFromPocketBase();
+    })();
+</script>
+</body>
+</html>
