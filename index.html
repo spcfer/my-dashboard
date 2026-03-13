@@ -321,8 +321,9 @@
         function renderGroupedBarChart(weeks, categories, dataByCategory) {
             if (barChart) barChart.destroy();
 
-            const datasets = categories.map(category => {
-                const hue = Array.from(category).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+            const datasets = categories.map((category, idx) => {
+                // evenly space hues around the color wheel to ensure distinct colors
+                const hue = Math.round((idx * 360) / categories.length);
                 return {
                     label: category,
                     data: dataByCategory[category],
@@ -405,12 +406,13 @@
         function renderPieChart(categories, data) {
             if (pieChart) pieChart.destroy();
 
-            const backgroundColors = categories.map(cat => {
-                const hue = Array.from(cat).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+            // generate distinct hues based on index to avoid collisions
+            const backgroundColors = categories.map((cat, idx) => {
+                const hue = Math.round((idx * 360) / categories.length);
                 return `hsl(${hue}, 70%, 65%)`;
             });
-            const borderColors = categories.map(cat => {
-                const hue = Array.from(cat).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+            const borderColors = categories.map((cat, idx) => {
+                const hue = Math.round((idx * 360) / categories.length);
                 return `hsl(${hue}, 70%, 45%)`;
             });
             
